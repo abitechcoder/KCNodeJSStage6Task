@@ -1,5 +1,11 @@
 const express = require("express");
-const { registerUser, logInUser } = require("./controller/user");
+const {
+  registerUser,
+  logInUser,
+  getProfile,
+  updateProfile,
+} = require("./controller/user");
+const Authorization = require("./middleware/Authorization");
 
 const app = express();
 
@@ -13,6 +19,10 @@ app.get("/", (req, res) => {
 app.post("/register", registerUser);
 
 app.post("/login", logInUser);
+
+app.post("/profile", Authorization, getProfile);
+
+app.patch("/profile", Authorization, updateProfile);
 
 app.listen(3000, () => {
   console.log("Server listening on Port 3000");

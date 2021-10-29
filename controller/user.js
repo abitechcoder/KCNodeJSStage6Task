@@ -31,19 +31,27 @@ const registerUser = async (req, res) => {
         id: uuidv4(),
         name: name,
         email: email,
+        status: "pending",
         password: hashPassword,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
       // Create a new user profile
       let profile = {
         id: uuidv4(),
         name: name,
         email: email,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
 
       // Add the newly created user to the user database
       userDB.push(newUser);
       // Add the user information to the profile database
       profileDB.push(profile);
+      console.log(userDB);
+      console.log(profileDB);
+
       res
         .status(200)
         .json([{ success: true, message: "User created successfully" }]);
@@ -80,9 +88,13 @@ const logInUser = async (req, res) => {
       // if password matches
       if (passwordMatch) {
         // generate a user token for the user
-        const token = jwt.sign({ id: foundUser.id }, "abitech_secret", {
-          expiresIn: "2d",
-        });
+        const token = jwt.sign(
+          { id: foundUser.id, email: foundUser.email },
+          "abitech_secret",
+          {
+            expiresIn: "2d",
+          }
+        );
 
         res.status(200).json([
           {
@@ -113,4 +125,49 @@ const logInUser = async (req, res) => {
   }
 };
 
-module.exports = { registerUser, logInUser };
+const getProfile = async (req, res) => {
+  // Gets the user email from the res.locals object
+  const userEmail = res.locals.userEmail;
+
+  // find if the user exist in the User Database
+  const account = userDB.find((user) => user.email === userEmail);
+
+  if (account) {
+    profileDB.find((profile) => {
+      if (profile.email === account.email) {
+        // attach account id to the profile object
+        (profile.accountId = account.id),
+          // attach the account status to the profile object
+          (profile.status = account.status);
+
+        res.status(200).json({ success: true, data: profile });
+      } else {
+        res
+          .status(404)
+          .json({ success: false, message: "User profile not found" });
+      }
+    });
+  } else {
+    res.status(404).json({ success: false, message: "User account not found" });
+  }
+};
+
+const updateProfile = async (req, res) => {
+  // Gets the user email from the res.locals object
+  const userEmail = res.locals.userEmail;
+
+  // find if the user exist in the User Database
+  const user = userDB.find((account) => account.email === userEmail);
+
+  if (user) {
+    profileDB.find((profile) => {
+      const updatedProfile = { ...profile, ...req.body };
+      res.status(201).json({ success: true, data: updatedProfile });
+    });
+  } else {
+    res
+      .status(404)
+      .json({ success: false, messsage: "User account not found" });
+  }
+};
+module.exports = { registerUser, logInUser, getProfile, updateProfile };
