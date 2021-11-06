@@ -1,8 +1,9 @@
+const { userModel, profileModel, permissionModel } = require("../model/user");
 const { userDB, profileDB } = require("../model/data");
 const bcrypt = require("bcrypt");
 const Joi = require("joi");
 const jwt = require("jsonwebtoken");
-const { v4: uuidv4 } = require("uuid");
+const EmailService = require("../utils/mailsender");
 
 // function to register a new user
 const registerUser = async (req, res) => {
@@ -28,29 +29,46 @@ const registerUser = async (req, res) => {
       let hashPassword = await bcrypt.hash(password, 10);
       // Create a new User object
       let newUser = {
-        id: uuidv4(),
         name: name,
         email: email,
-        status: "pending",
         password: hashPassword,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      // Create a new user profile
-      let profile = {
-        id: uuidv4(),
-        name: name,
-        email: email,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
       };
 
-      // Add the newly created user to the user database
-      userDB.push(newUser);
-      // Add the user information to the profile database
-      profileDB.push(profile);
-      console.log(userDB);
-      console.log(profileDB);
+      // Add the newly created user to the accounts collection
+      const createdUser = await userModel.create(newUser);
+
+      // Setup Permission
+      const permission = {
+        user: createdUser._id,
+      };
+
+      // Save permission
+      const createdPermission = await permissionModel.create(permission);
+
+      // Create a new user profile
+      let profile = {
+        name: name,
+        email: email,
+        status: createdUser._id,
+        permission: createdPermission._id,
+      };
+
+      // Add the user information to the profiles collection
+      const createdProfile = await profileModel.create(profile);
+
+      // console.log(createdUser, createdProfile, createdPermission);
+      const token = jwt.sign({ id: createdUser._id }, "abitech_secret", {
+        expiresIn: "1d",
+      });
+
+      EmailService({
+        mail: createdUser.email,
+        subject: "Verify your Account",
+        body: `<h3>Hey ${createdUser.name}</h3>
+        <h4>Welcome to our platform</h4>
+        <p>Pleaese click the link below to Activate your account.</p>
+        <a href="http://localhost:3000/user/verify/?secure=${token}">Activate account</a>`,
+      });
 
       res
         .status(200)
@@ -61,7 +79,11 @@ const registerUser = async (req, res) => {
         .json([{ success: false, message: "Email already exist" }]);
     }
   } catch (err) {
-    res.status(422).json([{ success: false, message: err.details[0] }]);
+    if (err.details) {
+      res.status(422).json([{ success: false, message: err.details[0] }]);
+    } else {
+      res.status(500).json({ success: false, message: err.message });
+    }
   }
 };
 
@@ -78,7 +100,7 @@ const logInUser = async (req, res) => {
     const { email, password } = value;
 
     // Checking if a user exist in user database
-    let foundUser = userDB.find((data) => email === data.email);
+    const foundUser = await userModel.findOne({ email: email }).exec();
     // If user is found compare the submitted password with the stored password
     if (foundUser) {
       let submittedPass = password;
@@ -89,7 +111,7 @@ const logInUser = async (req, res) => {
       if (passwordMatch) {
         // generate a user token for the user
         const token = jwt.sign(
-          { id: foundUser.id, email: foundUser.email },
+          { id: foundUser._id, email: foundUser.email },
           "abitech_secret",
           {
             expiresIn: "2d",
@@ -130,23 +152,27 @@ const getProfile = async (req, res) => {
   const userEmail = res.locals.userEmail;
 
   // find if the user exist in the User Database
-  const account = userDB.find((user) => user.email === userEmail);
+  const account = await userModel.findOne({ email: userEmail }).exec();
 
   if (account) {
-    profileDB.find((profile) => {
-      if (profile.email === account.email) {
-        // attach account id to the profile object
-        (profile.accountId = account.id),
+    profileModel
+      .findOne({ email: userEmail })
+      .populate({ path: "status", select: "status" })
+      .populate({ path: "permission", select: "type" })
+      .then((profile) => {
+        if (profile.email === account.email) {
+          // attach account id to the profile object
+          // profile.accountId = account._id;
           // attach the account status to the profile object
-          (profile.status = account.status);
-
-        res.status(200).json({ success: true, data: profile });
-      } else {
-        res
-          .status(404)
-          .json({ success: false, message: "User profile not found" });
-      }
-    });
+          // profile.status = profile.status.status;
+          // console.log(profile);
+          res.status(200).json({ success: true, data: profile });
+        } else {
+          res
+            .status(404)
+            .json({ success: false, message: "User profile not found" });
+        }
+      });
   } else {
     res.status(404).json({ success: false, message: "User account not found" });
   }
@@ -170,4 +196,68 @@ const updateProfile = async (req, res) => {
       .json({ success: false, messsage: "User account not found" });
   }
 };
-module.exports = { registerUser, logInUser, getProfile, updateProfile };
+
+const deleteUser = async (req, res) => {
+  const accountId = res.locals.userId;
+  try {
+    // Delete User Account from the database
+    const deletedUser = await userModel.findByIdAndDelete(accountId);
+
+    // Delete user profile from the database
+    const deletedProfile = await profileModel.findOneAndDelete({
+      email: deletedUser.email,
+    });
+
+    // Delete user permission record from the database
+    const deletedPermission = await permissionModel.findOneAndDelete({
+      user: deletedUser._id,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "User deleted Successfully",
+      deletedUser,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+const verifyAccount = async (req, res) => {
+  const token = req.query.secure;
+
+  const { id } = jwt.verify(token, "abitech_secret");
+  let foundIndex;
+  // check if user exist and fetch user info from the database
+  userModel.findByIdAndUpdate(id, { status: "activated" }, (err) => {
+    if (err) {
+      res.status(404).json({ success: false, message: "User not found" });
+    } else {
+      res
+        .status(201)
+        .json({ success: true, message: "User Activated Successfully" });
+    }
+    // if (user.status === "pending") {
+    //   user.status = "activated";
+    //   userDB.splice(foundIndex, 1, user);
+    //   res
+    //     .status(201)
+    //     .json({ success: true, message: "User Activated Successfully" });
+    // } else {
+    //   res
+    //     .status(304)
+    //     .json({ success: false, message: "User already Activated" });
+    // }
+  });
+};
+module.exports = {
+  registerUser,
+  logInUser,
+  getProfile,
+  updateProfile,
+  deleteUser,
+  verifyAccount,
+};

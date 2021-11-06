@@ -6,6 +6,7 @@ const Authorization = (req, res, next) => {
     const token = req.headers.authorization;
     const user = jwt.verify(token, "abitech_secret");
     console.log(user);
+    res.locals.userId = user.id;
     res.locals.userEmail = user.email;
     next();
   } catch (error) {

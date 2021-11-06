@@ -4,8 +4,21 @@ const {
   logInUser,
   getProfile,
   updateProfile,
+  deleteUser,
+  verifyAccount,
 } = require("./controller/user");
 const Authorization = require("./middleware/Authorization");
+const mongoose = require("mongoose");
+require("dotenv").config();
+
+// Connect to mongodb
+mongoose.connect(process.env.MONGODB_URI, (err) => {
+  if (err) {
+    console.log(err.message);
+  } else {
+    console.log("Connected to MongoDB");
+  }
+});
 
 const app = express();
 
@@ -16,13 +29,21 @@ app.get("/", (req, res) => {
   res.send("<h1>Hello, Welcome</h1>");
 });
 
-app.post("/register", registerUser);
+// creates a user account
+app.post("/user/register", registerUser);
 
-app.post("/login", logInUser);
+// verifies user account
+app.get("/user/verify", verifyAccount);
 
-app.post("/profile", Authorization, getProfile);
+// authenticates the user
+app.post("/user/login", logInUser);
 
-app.patch("/profile", Authorization, updateProfile);
+// gets the user profile
+app.post("/user/profile", Authorization, getProfile);
+
+// updates the user profile
+app.patch("/user/profile", Authorization, updateProfile);
+app.delete("/user", Authorization, deleteUser);
 
 app.listen(3000, () => {
   console.log("Server listening on Port 3000");
